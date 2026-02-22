@@ -122,7 +122,7 @@ export default function App() {
 
   // ── Actualités automatiques ──────────────────────────────────────────────
   const fetchNews = useCallback(async (force = false) => {
-    // Vérifier le cache
+    // Vérifier le cache d'abord
     if (!force) {
       try {
         const cached = localStorage.getItem(NEWS_CACHE_KEY)
@@ -141,65 +141,33 @@ export default function App() {
     setNewsError(null)
 
     try {
-      const today = new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" })
+      // Appel à notre fonction Vercel serverless (clé API sécurisée côté serveur)
+      const response = await fetch("/api/news")
 
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-          system: `Tu es un agrégateur d'actualités anime et manga. 
-Aujourd'hui nous sommes le ${today}.
-Tu dois chercher les 8 dernières actualités anime/manga sur le web (sources : animenewsnetwork.com, manga-news.com, adala-news.fr, animotaku.fr, crunchyroll.com).
-Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après, sans balises markdown.
-Format exact :
-[
-  {
-    "id": 1,
-    "category": "ANIME" ou "MANGA" ou "INDUSTRIE",
-    "tag": "NOUVEAU" ou "TRAILER" ou "DATE" ou "VF" ou "ANNONCE" ou "DISPO" ou "RECORD" ou "STAFF" ou "FIN",
-    "title": "titre court de l'actu",
-    "desc": "description de 2-3 phrases",
-    "img": "un emoji pertinent",
-    "color": "une couleur hex parmi #ff4757 #ffa502 #5352ed #2ed573 #00d2d3 #ff6b81 #eccc68",
-    "time": "Aujourd'hui" ou "Il y a Xh" ou "Il y a Xj",
-    "hot": true ou false,
-    "source": "nom de la source",
-    "url": "URL exacte de l'article"
-  }
-]`,
-          messages: [{ role: "user", content: "Cherche les 8 dernières actualités anime et manga du moment et retourne le JSON." }]
-        })
-      })
-
-      const data = await response.json()
-
-      // Extraire le texte de la réponse (peut contenir des blocs tool_use)
-      let text = ""
-      if (data.content) {
-        for (const block of data.content) {
-          if (block.type === "text") text += block.text
-        }
+      if (!response.ok) {
+        throw new Error(`Erreur serveur: ${response.status}`)
       }
 
-      // Nettoyer et parser le JSON
-      const clean = text.replace(/```json|```/g, "").trim()
-      const parsed = JSON.parse(clean)
+      const result = await response.json()
+
+      if (result.error) {
+        throw new Error(result.error)
+      }
+
+      const parsed = result.news
 
       if (Array.isArray(parsed) && parsed.length > 0) {
         setNews(parsed)
-        setLastUpdate(new Date())
+        setLastUpdate(new Date(result.updatedAt))
         localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify({
           data: parsed,
-          timestamp: Date.now()
+          timestamp: result.updatedAt
         }))
       }
     } catch (e) {
       console.error("Erreur chargement news:", e)
       setNewsError("Impossible de charger les actualités. Réessaie dans quelques instants.")
-      // Charger depuis le cache même expiré en cas d'erreur
+      // Utiliser le cache expiré en cas d'erreur
       try {
         const cached = localStorage.getItem(NEWS_CACHE_KEY)
         if (cached) {
